@@ -1,0 +1,451 @@
+networks:
+  master-proxy-nw:
+    name: master-proxy-nw
+
+services:
+# --- NETWORKING & REVERSE PROXY ---
+  cloudflared:
+    image: cloudflare/cloudflared:${VER}
+    container_name: cloudflared
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run --token ${CF_SECURE_TOKEN}
+    networks:
+      - master-proxy-nw
+
+  traefik: 
+    image: traefik:v3.0
+    container_name: traefik
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - master-proxy-nw
+    ports:
+      - 80:80
+      - 443:443
+    environment:
+      - CF_DNS_API_TOKEN=${CF_DNS_TOKEN} 
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ${NWU_HOME_DIR}/traefik/acme.json:/acme.json 
+    command:
+      - "--providers.docker=true"
+      - "--providers.docker.exposedbydefault=false"
+      - "--entrypoints.web.address=:80"
+      - "--entrypoints.websecure.address=:443"
+      - "--entrypoints.web.http.redirections.entryPoint.to=websecure"
+      - "--certificatesresolvers.myresolver.acme.dnschallenge=true"
+      - "--certificatesresolvers.myresolver.acme.dnschallenge.provider=cloudflare"
+      - "--certificatesresolvers.myresolver.acme.email=${EMAIL}"
+      - "--certificatesresolvers.myresolver.acme.storage=/acme.json"
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.traefik.rule=Host(`traefik.${DOMAIN}`)"
+      - "traefik.http.routers.traefik.service=api@internal"
+      - "traefik.http.routers.traefik.tls.certresolver=myresolver"
+      - "traefik.http.middlewares.authentik.forwardauth.address=http://authentik-server:9000/outpost.goauthentik.io/auth/traefik"
+      - "traefik.http.middlewares.authentik.forwardauth.trustForwardHeader=true"
+      - "traefik.http.middlewares.authentik.forwardauth.authResponseHeaders=X-authentik-username,X-authentik-groups,X-authentik-email,X-authentik-name,X-authentik-uid,Authorization"
+
+# --- AUTHENTIK SSO STACK ---
+  authentik-db:
+    image: postgres:15-alpine
+    container_name: authentik-db
+    restart: unless-stopped
+    user: ${SERVERU_ID}:${SERVERU_ID}  # Running as non-root user
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -d $${POSTGRES_DB} -U $${POSTGRES_USER}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    environment:
+      POSTGRES_PASSWORD: ${PG_PASS}
+      POSTGRES_USER: authentik
+      POSTGRES_DB: authentik
+    volumes:
+      - ${SERVERU_HOME_DIR}/authentik/db:/var/lib/postgresql/data
+    networks:
+      - master-proxy-nw
+
+  authentik-redis:
+    image: redis:alpine
+    container_name: authentik-redis
+    restart: unless-stopped
+    user: ${SERVERU_ID}:${SERVERU_ID} # Running as non-root user
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli ping | grep PONG"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - master-proxy-nw
+
+  authentik-server:
+    image: ghcr.io/goauthentik/server:latest
+    container_name: authentik-server
+    restart: unless-stopped
+    command: server
+    depends_on:
+      authentik-db:
+        condition: service_healthy
+      authentik-redis:
+        condition: service_healthy
+    environment:
+      AUTHENTIK_REDIS__HOST: authentik-redis
+      AUTHENTIK_POSTGRESQL__HOST: authentik-db
+      AUTHENTIK_POSTGRESQL__USER: authentik
+      AUTHENTIK_POSTGRESQL__NAME: authentik
+      AUTHENTIK_POSTGRESQL__PASSWORD: ${PG_PASS}
+      AUTHENTIK_SECRET_KEY: ${AUTHENTIK_SECRET_KEY}
+    volumes:
+      - ${SERVERU_HOME_DIR}/authentik/media:/media
+      - ${SERVERU_HOME_DIR}/authentik/templates:/templates
+    networks:
+      - master-proxy-nw
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.authentik.rule=Host(`auth.${DOMAIN}`)"
+      - "traefik.http.routers.authentik.tls.certresolver=myresolver"
+      - "traefik.http.services.authentik.loadbalancer.server.port=9000"
+
+  authentik-worker:
+    image: ghcr.io/goauthentik/server:latest
+    container_name: authentik-worker
+    command: worker
+    restart: unless-stopped
+    depends_on:
+      authentik-db:
+        condition: service_healthy
+      authentik-redis:
+        condition: service_healthy
+    environment:
+      AUTHENTIK_REDIS__HOST: authentik-redis
+      AUTHENTIK_POSTGRESQL__HOST: authentik-db
+      AUTHENTIK_POSTGRESQL__USER: authentik
+      AUTHENTIK_POSTGRESQL__NAME: authentik
+      AUTHENTIK_POSTGRESQL__PASSWORD: ${PG_PASS}
+      AUTHENTIK_SECRET_KEY: ${AUTHENTIK_SECRET_KEY}
+    user: root # Explicitly root as it requires socket access for Docker/LDAP Outposts
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ${SERVERU_HOME_DIR}/authentik/media:/media
+      - ${SERVERU_HOME_DIR}/authentik/certs:/certs
+      - ${SERVERU_HOME_DIR}/authentik/custom-templates:/templates
+    networks:
+      - master-proxy-nw
+
+# --- MANAGEMENT ---
+  homepage:
+    image: ghcr.io/gethomepage/homepage:${VER}
+    container_name: homepage
+    user: ${SERVERU_ID}:${SERVERU_ID}
+    environment:
+      - TZ=${TZ}
+    volumes:
+      - ${SERVERU_HOME_DIR}/homepage/config:/app/config
+      - /var/run/docker.sock:/var/run/docker.sock 
+    restart: unless-stopped
+    networks:
+      - master-proxy-nw
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.homepage.rule=Host(`home.${DOMAIN}`)"
+      - "traefik.http.routers.homepage.tls.certresolver=myresolver"
+
+  filebrowser:
+    image: filebrowser/filebrowser:${VER}
+    container_name: filebrowser
+    user: ${FILEU_ID}:${FILEU_ID}
+    volumes:
+      - ${STORAGE_DIR}:/srv/Media
+      - ${SERVERU_HOME_DIR}/homepage/config:/srv/Server
+      - ${FILEU_HOME_DIR}/filebrowser/database:/database
+      - ${FILEU_HOME_DIR}/filebrowser/config:/config
+    restart: unless-stopped
+    networks:
+      - master-proxy-nw
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.filebrowser.rule=Host(`files.${DOMAIN}`)"
+      - "traefik.http.routers.filebrowser.tls.certresolver=myresolver"
+      - "traefik.http.routers.filebrowser.middlewares=authentik@docker"
+
+# --- STREAMING ---
+  jellyfin:
+    container_name: jellyfin
+    image: jellyfin/jellyfin:${VER}
+    user: ${STREAMU_ID}:${STREAMU_ID}
+    environment:
+      - TZ=${TZ}
+    volumes:
+      - ${STREAMU_DIR}/jellyfin/config:/config
+      - ${STREAMU_DIR}/jellyfin/cache:/cache
+      - ${STORAGE_DIR}/Anime:/Anime:ro
+      - ${STORAGE_DIR}/Movies:/movies:ro
+      - ${STORAGE_DIR}/TV:/tv:ro
+      - ${STORAGE_DIR}/Test:/Other:ro
+    restart: unless-stopped
+    networks:
+      - master-proxy-nw
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.jellyfin.rule=Host(`jellyfin.${DOMAIN}`)"
+      - "traefik.http.routers.jellyfin.tls.certresolver=myresolver"
+      - "traefik.http.routers.jellyfin.middlewares=authentik@docker"
+
+  kavita:
+    container_name: kavita
+    image: ghcr.io/kareadita/kavita:${VER}
+    user: ${STREAMU_ID}:${STREAMU_ID}
+    environment:
+      - TZ=${TZ}
+    volumes:
+      - ${STREAMU_DIR}/kavita/config:/kavita/config
+      - ${STORAGE_DIR}/Books:/data:ro
+    restart: unless-stopped
+    networks:
+      - master-proxy-nw
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.kavita.rule=Host(`kavita.${DOMAIN}`)"
+      - "traefik.http.routers.kavita.tls.certresolver=myresolver"
+      - "traefik.http.routers.kavita.middlewares=authentik@docker"
+
+  navidrome:
+    image: deluan/navidrome:${VER}
+    container_name: navidrome
+    user: ${STREAMU_ID}:${STREAMU_ID}
+    environment:
+      ND_SCANSCHEDULE: 1h
+      ND_LOGLEVEL: info
+      ND_BASEURL: ""
+    volumes:
+      - ${STREAMU_DIR}/navidrome:/data
+      - ${STORAGE_DIR}/Music:/music:ro
+      - ${STORAGE_DIR}/Podcasts:/podcasts:ro
+    networks:
+      - master-proxy-nw
+    restart: unless-stopped
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.navidrome.rule=Host(`music.${DOMAIN}`)"
+      - "traefik.http.routers.navidrome.tls.certresolver=myresolver"
+
+  audiobookshelf:
+    container_name: audiobookshelf
+    image: ghcr.io/advplyr/audiobookshelf:${VER}
+    user: ${STREAMU_ID}:${STREAMU_ID}
+    environment:
+      - TZ=${TZ}
+    volumes:
+      - ${STREAMU_DIR}/audiobookshelf/config:/config
+      - ${STREAMU_DIR}/audiobookshelf/metadata:/metadata
+      - ${STORAGE_DIR}/Podcasts:/podcasts
+    networks:
+      - master-proxy-nw
+    restart: unless-stopped
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.abs.rule=Host(`audio.${DOMAIN}`)"
+      - "traefik.http.routers.abs.tls.certresolver=myresolver"
+      - "traefik.http.routers.abs.middlewares=authentik@docker"
+
+# --- VPN & TORRENTING ---
+  gluetun:
+    image: qmcgaw/gluetun:${VER}
+    container_name: gluetun
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    restart: always
+    ports:
+      - 8080:8080
+      - 6881:6881
+      - 6881:6881/udp
+      - 8200:8989
+      - 8300:9117
+      - 8400:5030
+    environment:
+      - VPN_SERVICE_PROVIDER=nordvpn
+      - VPN_TYPE=wireguard
+      - WIREGUARD_PRIVATE_KEY=${WIREGUARD_PRIVATE_KEY}
+      - SERVER_COUNTRIES=Australia
+      - HTTP_CONTROL_SERVER_ADDRESS=0.0.0.0:8000
+      - HTTP_CONTROL_SERVER_LOG=on
+      - HTTP_CONTROL_SERVER_AUTH_DEFAULT_ROLE={"auth":"apikey","apikey":"${GLUETUN_API}"}
+      - DOT=on
+      - DOT_PROVIDERS=cloudflare
+    volumes:
+      - ${NWU_HOME_DIR}/gluetun:/gluetun
+    networks:
+      - master-proxy-nw
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.sonarr.rule=Host(`sonarr.${DOMAIN}`)"
+      - "traefik.http.routers.sonarr.tls.certresolver=myresolver"
+      - "traefik.http.routers.sonarr.service=sonarr-svc"
+      - "traefik.http.routers.sonarr.middlewares=authentik@docker"
+      - "traefik.http.services.sonarr-svc.loadbalancer.server.port=8989"
+      - "traefik.http.routers.qbit.rule=Host(`qbit.${DOMAIN}`)"
+      - "traefik.http.routers.qbit.tls.certresolver=myresolver"
+      - "traefik.http.routers.qbit.service=qbit-svc"
+      - "traefik.http.routers.qbit.middlewares=authentik@docker"
+      - "traefik.http.services.qbit-svc.loadbalancer.server.port=8080"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- --header='X-API-Key: ${GLUETUN_API}' http://127.0.0.1:8000/v1/publicip/ip || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+  gluetun-webui:
+    image: scuzza/gluetun-webui:latest
+    container_name: gluetun-webui
+    restart: unless-stopped
+    environment:
+      - GLUETUN_CONTROL_URL=http://gluetun:8000
+      - GLUETUN_API_KEY=${GLUETUN_API}
+    networks:
+      - master-proxy-nw
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.gluetunweb.rule=Host(`vpn.${DOMAIN}`)"
+      - "traefik.http.routers.gluetunweb.tls.certresolver=myresolver"
+      - "traefik.http.routers.gluetunweb.middlewares=authentik@docker"
+
+  qbittorrent:
+    image: lscr.io/linuxserver/qbittorrent:${VER}
+    container_name: qbittorrent
+    user: ${TORRENTU_ID}:${TORRENTU_ID}
+    network_mode: "service:gluetun"
+    depends_on:
+      gluetun:
+        condition: service_healthy
+    environment:
+      - TZ=${TZ}
+      - PERMISSIONS=skip
+      - UMASK=002
+    volumes:
+      - ${TORRENTU_HOME_DIR}/qbittorrent/config:/config
+      - ${STORAGE_DIR}/Torrents:/downloads
+    restart: always
+
+  sonarr:
+    image: lscr.io/linuxserver/sonarr:${VER}
+    container_name: sonarr
+    network_mode: "service:gluetun"
+    depends_on:
+      gluetun:
+        condition: service_healthy
+    environment:
+      - PUID=${TORRENTU_ID}
+      - PGID=${TORRENTU_ID}
+      - TZ=${TZ}
+      - PERMISSIONS=skip
+    volumes:
+      - ${TORRENTU_HOME_DIR}/sonarr/config:/config
+      - ${STORAGE_DIR}/Completed:/tv
+      - ${STORAGE_DIR}/Torrents:/downloads
+    restart: always
+
+# --- PHOTO SERVER ---
+  immich-server:
+    container_name: immich_server
+    image: ghcr.io/immich-app/immich-server:${IMMICH_VERSION:-release}
+    user: ${PHOTOU_ID}:${PHOTOU_ID}
+    volumes:
+      - ${UPLOAD_LOCATION}:/data
+      - ${STORAGE_DIR}/ExternalPhotos:/external_photos
+      - /etc/localtime:/etc/localtime:ro
+    env_file:
+      - stack.env
+    depends_on:
+      - redis
+      - database
+    restart: always
+    networks:
+      - master-proxy-nw
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.immich.rule=Host(`photos.${DOMAIN}`)"
+      - "traefik.http.routers.immich.tls.certresolver=myresolver"
+      - "traefik.http.services.immich.loadbalancer.server.port=2283"
+
+  immich-machine-learning:
+    container_name: immich_machine_learning
+    image: ghcr.io/immich-app/immich-machine-learning:${IMMICH_VERSION:-release}
+    user: ${PHOTOU_ID}:${PHOTOU_ID}
+    volumes:
+      - ${MODEL_CACHE_LOCATION}:/cache
+      - ${ML_CONFIG_LOCATION}:/config
+      - ${ML_DOT_CACHE}:/.cache
+    env_file:
+      - stack.env
+    environment:
+      - MPLCONFIGDIR=/cache/matplotlib
+    restart: always
+    networks:
+      - master-proxy-nw
+
+  redis:
+    container_name: immich_redis
+    image: docker.io/redis:${VER}
+    user: ${PHOTOU_ID}:${PHOTOU_ID}
+    volumes:
+      - ${REDIS_DATA_LOCATION}:/data
+    restart: always
+    networks:
+      - master-proxy-nw
+
+  database:
+    container_name: immich_postgres
+    image: ghcr.io/immich-app/postgres:14-vectorchord0.4.3-pgvectors0.2.0@sha256:bcf63357191b76a916ae5eb93464d65c07511da41e3bf7a8416db519b40b1c23
+    user: ${PHOTOU_ID}:${PHOTOU_ID}
+    environment:
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_USER: ${DB_USERNAME}
+      POSTGRES_DB: ${DB_DATABASE_NAME}
+      POSTGRES_INITDB_ARGS: '--data-checksums'
+    volumes:
+      - ${DB_DATA_LOCATION}:/var/lib/postgresql/data
+    shm_size: 128mb
+    restart: always
+    networks:
+      - master-proxy-nw
+
+# --- SMART HOME ---
+  homeassistant:
+    container_name: Home-Assistant
+    image: ghcr.io/home-assistant/home-assistant:stable
+    network_mode: host 
+    privileged: true 
+    user: ${SERVERU_ID}:${SERVERU_ID}
+    volumes:
+      - ${SERVERU_HOME_DIR}/home-assistant:/config
+      - /etc/localtime:/etc/localtime:ro
+      - /run/dbus:/run/dbus:ro 
+    environment:
+      - TZ=${TZ}
+    restart: unless-stopped
+
+  esphome:
+    container_name: esphome
+    image: ghcr.io/esphome/esphome
+    user: ${SERVERU_ID}:${SERVERU_ID}
+    environment:
+      - PLATFORMIO_CORE_DIR=/config/.platformio
+      - UV_CACHE_DIR=/config/.cache/uv
+      - ESPHOME_DASHBOARD_USE_PING=true
+    volumes:
+      - ${SERVERU_HOME_DIR}/esphome/config:/config
+      - /etc/localtime:/etc/localtime:ro
+    network_mode: host
+    restart: always
