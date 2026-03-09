@@ -65,6 +65,7 @@ PG_PASS=postgres_password
 AUTHENTIK_SECRET_KEY=authentik_secret
 WIREGUARD_PRIVATE_KEY=vpn_private_key
 GLUETUN_API=gluetun_api_key
+VPN_COUNTRY=selected_country_for_vpn
 
 # Immich Specific
 UPLOAD_LOCATION=/path/to/photos
