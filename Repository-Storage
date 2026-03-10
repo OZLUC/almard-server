@@ -1,0 +1,23 @@
+REPOSITORY                                   SIZE
+filebrowser/filebrowser                      45.3MB
+qmcgaw/gluetun                               60.3MB
+cloudflare/cloudflared                       94.6MB
+redis                                        134MB
+traefik                                      222MB
+scuzza/gluetun-webui                         248MB
+lscr.io/linuxserver/qbittorrent              295MB
+lscr.io/linuxserver/sonarr                   304MB
+portainer/portainer-ee                       323MB
+deluan/navidrome                             328MB
+ghcr.io/gethomepage/homepage                 389MB
+ghcr.io/advplyr/audiobookshelf               467MB
+postgres                                     633MB
+ghcr.io/kareadita/kavita                     927MB
+ghcr.io/immich-app/postgres                  989MB
+ghcr.io/esphome/esphome                      1.11GB
+ghcr.io/goauthentik/server                   1.62GB
+ghcr.io/immich-app/immich-machine-learning   1.9GB
+jellyfin/jellyfin                            2.26GB
+ghcr.io/immich-app/immich-server             3.09GB
+ghcr.io/home-assistant/home-assistant        3.33GB
+
