@@ -34,89 +34,18 @@ services:
     networks:
       - master-proxy-nw
 
-# --- AUTHENTIK SSO STACK ---
-  authentik-db:
-    image: postgres:15
-    container_name: authentik-db
+# --- LIGHTWEIGHT AUTH ---
+  authelia:
+    image: authelia/authelia:latest
+    container_name: authelia
+    user: "${NWU_ID}:${NWU_ID}"
     restart: unless-stopped
-    user: ${SERVERU_ID}:${SERVERU_ID}
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -d authentik -U authentik"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
+    volumes:
+      - ${NWU_HOME_DIR}/authelia/config:/config
+    networks:
+      - master-proxy-nw
     environment:
-      POSTGRES_PASSWORD: ${PG_PASS}
-      POSTGRES_USER: authentik
-      POSTGRES_DB: authentik
-    volumes:
-      - ${SERVERU_HOME_DIR}/authentik/db:/var/lib/postgresql/data
-    networks:
-      - master-proxy-nw
-
-  authentik-redis:
-    image: redis:alpine
-    container_name: authentik-redis
-    user: ${SERVERU_ID}:${SERVERU_ID}
-    restart: unless-stopped
-    volumes:
-      - ${SERVERU_HOME_DIR}/authentik/redis:/data
-    healthcheck:
-      test: ["CMD-SHELL", "redis-cli ping | grep PONG"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-    networks:
-      - master-proxy-nw
-
-  authentik-server:
-    image: ghcr.io/goauthentik/server:latest
-    container_name: authentik-server
-    user: ${SERVERU_ID}:${SERVERU_ID}
-    restart: unless-stopped
-    command: server
-    depends_on:
-      authentik-db:
-        condition: service_healthy
-      authentik-redis:
-        condition: service_healthy
-    environment:
-      AUTHENTIK_REDIS__HOST: authentik-redis
-      AUTHENTIK_POSTGRESQL__HOST: authentik-db
-      AUTHENTIK_POSTGRESQL__USER: authentik
-      AUTHENTIK_POSTGRESQL__NAME: authentik
-      AUTHENTIK_POSTGRESQL__PASSWORD: ${PG_PASS}
-      AUTHENTIK_SECRET_KEY: ${AUTHENTIK_SECRET_KEY}
-    volumes:
-      - ${SERVERU_HOME_DIR}/authentik/media:/media
-      - ${SERVERU_HOME_DIR}/authentik/templates:/templates
-    networks:
-      - master-proxy-nw
-
-  authentik-worker:
-    image: ghcr.io/goauthentik/server:latest
-    container_name: authentik-worker
-    command: worker
-    restart: unless-stopped
-    depends_on:
-      authentik-db:
-        condition: service_healthy
-      authentik-redis:
-        condition: service_healthy
-    environment:
-      AUTHENTIK_REDIS__HOST: authentik-redis
-      AUTHENTIK_POSTGRESQL__HOST: authentik-db
-      AUTHENTIK_POSTGRESQL__USER: authentik
-      AUTHENTIK_POSTGRESQL__NAME: authentik
-      AUTHENTIK_POSTGRESQL__PASSWORD: ${PG_PASS}
-      AUTHENTIK_SECRET_KEY: ${AUTHENTIK_SECRET_KEY}
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
-      - ${SERVERU_HOME_DIR}/authentik/media:/media
-      - ${SERVERU_HOME_DIR}/authentik/certs:/certs
-      - ${SERVERU_HOME_DIR}/authentik/custom-templates:/templates
-    networks:
-      - master-proxy-nw
+      - TZ=${TZ}
 
 # --- MANAGEMENT ---
   homepage:
