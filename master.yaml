@@ -4,6 +4,27 @@ networks:
 
 services:
 # --- NETWORKING & REVERSE PROXY ---
+  caddy:
+    build: 
+      context: ./caddy
+      dockerfile: Dockerfile
+    container_name: caddy
+    user: "${NWU_ID}:${NWU_ID}"
+    restart: unless-stopped
+    cap_add:
+      - NET_BIND_SERVICE
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      - CLOUDFLARE_API_TOKEN=${CF_DNS_TOKEN}
+    volumes:
+      - ${NWU_HOME_DIR}/caddy/Caddyfile:/etc/caddy/Caddyfile
+      - ${NWU_HOME_DIR}/caddy/data:/data
+      - ${NWU_HOME_DIR}/caddy/config:/config
+    networks:
+      - master-proxy-nw
+
   cloudflared:
     image: cloudflare/cloudflared:${VER}
     container_name: cloudflared
@@ -12,47 +33,6 @@ services:
     command: tunnel --no-autoupdate run --token ${CF_SECURE_TOKEN}
     networks:
       - master-proxy-nw
-
-  traefik: 
-    image: traefik:v3.0
-    container_name: traefik
-    user: ${NWU_ID}:${NWU_ID}
-    restart: unless-stopped
-    cap_add:
-      - NET_BIND_SERVICE
-    security_opt:
-      - no-new-privileges:true
-    networks:
-      - master-proxy-nw
-    ports:
-      - 80:80
-      - 443:443
-    environment:
-      - CF_DNS_API_TOKEN=${CF_DNS_TOKEN} 
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock:ro
-      - ${NWU_HOME_DIR}/traefik/acme.json:/acme.json 
-    command:
-      - "--log.level=DEBUG"
-      - "--api.dashboard=true"
-      - "--providers.docker=true"
-      - "--providers.docker.exposedbydefault=false"
-      - "--entrypoints.web.address=:80"
-      - "--entrypoints.websecure.address=:443"
-      - "--entrypoints.web.http.redirections.entryPoint.to=websecure"
-      - "--certificatesresolvers.myresolver.acme.dnschallenge=true"
-      - "--certificatesresolvers.myresolver.acme.dnschallenge.provider=cloudflare"
-      - "--certificatesresolvers.myresolver.acme.email=${EMAIL}"
-      - "--certificatesresolvers.myresolver.acme.storage=/acme.json"
-    labels:
-      - "traefik.enable=true"
-      - "traefik.http.routers.traefik.rule=Host(`traefik.${DOMAIN}`)"
-      - "traefik.http.routers.traefik.service=api@internal"
-      - "traefik.http.routers.traefik.tls.certresolver=myresolver"
-      - "traefik.http.routers.traefik.entrypoints=websecure"
-      - "traefik.http.middlewares.authentik.forwardauth.address=http://authentik-server:9000/outpost.goauthentik.io/auth/traefik"
-      - "traefik.http.middlewares.authentik.forwardauth.trustForwardHeader=true"
-      - "traefik.http.middlewares.authentik.forwardauth.authResponseHeaders=X-authentik-username,X-authentik-groups,X-authentik-email,X-authentik-name,X-authentik-uid,Authorization"
 
 # --- AUTHENTIK SSO STACK ---
   authentik-db:
@@ -112,11 +92,6 @@ services:
       - ${SERVERU_HOME_DIR}/authentik/templates:/templates
     networks:
       - master-proxy-nw
-    labels:
-      - "traefik.enable=true"
-      - "traefik.http.routers.authentik.rule=Host(`auth.${DOMAIN}`)"
-      - "traefik.http.routers.authentik.tls.certresolver=myresolver"
-      - "traefik.http.services.authentik.loadbalancer.server.port=9000"
 
   authentik-worker:
     image: ghcr.io/goauthentik/server:latest
@@ -152,17 +127,13 @@ services:
       - 3000:3000
     environment:
       - TZ=${TZ}
-      - HOMEPAGE_ALLOWED_HOSTS=homepage.ostechnology.org
+      - HOMEPAGE_ALLOWED_HOSTS=homepage.${DOMAIN}
     volumes:
       - ${SERVERU_HOME_DIR}/homepage/config:/app/config
       - /var/run/docker.sock:/var/run/docker.sock 
     restart: unless-stopped
     networks:
       - master-proxy-nw
-    labels:
-      - "traefik.enable=true"
-      - "traefik.http.routers.homepage.rule=Host(`homepage.${DOMAIN}`)"
-      - "traefik.http.routers.homepage.tls.certresolver=myresolver"
 
   filebrowser:
     image: filebrowser/filebrowser:${VER}
@@ -178,11 +149,6 @@ services:
     restart: unless-stopped
     networks:
       - master-proxy-nw
-    labels:
-      - "traefik.enable=true"
-      - "traefik.http.routers.filebrowser.rule=Host(`filebrowser.${DOMAIN}`)"
-      - "traefik.http.routers.filebrowser.tls.certresolver=myresolver"
-      - "traefik.http.routers.filebrowser.middlewares=authentik@docker"
 
 # --- STREAMING ---
   jellyfin:
@@ -203,11 +169,6 @@ services:
     restart: unless-stopped
     networks:
       - master-proxy-nw
-    labels:
-      - "traefik.enable=true"
-      - "traefik.http.routers.jellyfin.rule=Host(`jellyfin.${DOMAIN}`)"
-      - "traefik.http.routers.jellyfin.tls.certresolver=myresolver"
-      - "traefik.http.routers.jellyfin.middlewares=authentik@docker"
 
   kavita:
     container_name: kavita
@@ -223,11 +184,6 @@ services:
     restart: unless-stopped
     networks:
       - master-proxy-nw
-    labels:
-      - "traefik.enable=true"
-      - "traefik.http.routers.kavita.rule=Host(`kavita.${DOMAIN}`)"
-      - "traefik.http.routers.kavita.tls.certresolver=myresolver"
-      - "traefik.http.routers.kavita.middlewares=authentik@docker"
 
   navidrome:
     image: deluan/navidrome:${VER}
@@ -246,10 +202,6 @@ services:
     networks:
       - master-proxy-nw
     restart: unless-stopped
-    labels:
-      - "traefik.enable=true"
-      - "traefik.http.routers.navidrome.rule=Host(`music.${DOMAIN}`)"
-      - "traefik.http.routers.navidrome.tls.certresolver=myresolver"
 
   audiobookshelf:
     container_name: audiobookshelf
@@ -266,11 +218,6 @@ services:
     networks:
       - master-proxy-nw
     restart: unless-stopped
-    labels:
-      - "traefik.enable=true"
-      - "traefik.http.routers.abs.rule=Host(`audio.${DOMAIN}`)"
-      - "traefik.http.routers.abs.tls.certresolver=myresolver"
-      - "traefik.http.routers.abs.middlewares=authentik@docker"
 
 # --- VPN & TORRENTING ---
   gluetun:
@@ -303,28 +250,6 @@ services:
       - ${NWU_HOME_DIR}/gluetun:/gluetun
     networks:
       - master-proxy-nw
-    labels:
-      - "traefik.enable=true"
-      - "traefik.http.routers.sonarr.rule=Host(`sonarr.${DOMAIN}`)"
-      - "traefik.http.routers.sonarr.tls.certresolver=myresolver"
-      - "traefik.http.routers.sonarr.service=sonarr-svc"
-      - "traefik.http.routers.sonarr.middlewares=authentik@docker"
-      - "traefik.http.services.sonarr-svc.loadbalancer.server.port=8989"
-      - "traefik.http.routers.qbit.rule=Host(`torrent.${DOMAIN}`)"
-      - "traefik.http.routers.qbit.tls.certresolver=myresolver"
-      - "traefik.http.routers.qbit.service=qbit-svc"
-      - "traefik.http.routers.qbit.middlewares=authentik@docker"
-      - "traefik.http.services.qbit-svc.loadbalancer.server.port=8080"
-      - "traefik.http.routers.jackett.rule=Host(`jackett.${DOMAIN}`)"
-      - "traefik.http.routers.jackett.tls.certresolver=myresolver"
-      - "traefik.http.routers.jackett.service=jackett-svc"
-      - "traefik.http.routers.jackett.middlewares=authentik@docker"
-      - "traefik.http.services.jackett-svc.loadbalancer.server.port=9117"
-      - "traefik.http.routers.slskd.rule=Host(`soulseek.${DOMAIN}`)"
-      - "traefik.http.routers.slskd.tls.certresolver=myresolver"
-      - "traefik.http.routers.slskd.service=slskd-svc"
-      - "traefik.http.routers.slskd.middlewares=authentik@docker"
-      - "traefik.http.services.slskd-svc.loadbalancer.server.port=5030"
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- --header='X-API-Key: ${GLUETUN_API}' http://127.0.0.1:8000/v1/publicip/ip || exit 1"]
       interval: 30s
@@ -343,11 +268,6 @@ services:
       - GLUETUN_CONTROL_URL=http://gluetun:8000
     networks:
       - master-proxy-nw
-    labels:
-      - "traefik.enable=true"
-      - "traefik.http.routers.gluetunweb.rule=Host(`vpn.${DOMAIN}`)"
-      - "traefik.http.routers.gluetunweb.tls.certresolver=myresolver"
-      - "traefik.http.routers.gluetunweb.middlewares=authentik@docker"
 
   qbittorrent:
     image: lscr.io/linuxserver/qbittorrent:${VER}
@@ -441,11 +361,6 @@ services:
     restart: always
     networks:
       - master-proxy-nw
-    labels:
-      - "traefik.enable=true"
-      - "traefik.http.routers.immich.rule=Host(`photos.${DOMAIN}`)"
-      - "traefik.http.routers.immich.tls.certresolver=myresolver"
-      - "traefik.http.services.immich.loadbalancer.server.port=2283"
 
   immich-machine-learning:
     container_name: immich_machine_learning
@@ -505,11 +420,6 @@ services:
     environment:
       - TZ=${TZ}
     restart: unless-stopped
-    labels:
-      - "traefik.enable=true"
-      - "traefik.http.routers.homeassistant.rule=Host(`ha.${DOMAIN}`)"
-      - "traefik.http.routers.homeassistant.tls.certresolver=myresolver"
-      - "traefik.http.services.homeassistant.loadbalancer.server.port=8123"
 
   esphome:
     container_name: esphome
