@@ -72,3 +72,72 @@ UPLOAD_LOCATION=/path/to/photos
 DB_PASSWORD=immich_db_pass
 DB_USERNAME=immich_db_user
 DB_DATABASE_NAME=immich
+ 
+    
+Almard Server: Nuclear Redeploy
+
+This repository contains the complete "Rebuild" state for the Almard Home Server. Following a OS reinstall this repository will rebuild the server from dependency to deployment. 
+
+Procedure:
+The recovery is split into six scripts. Each handles a specific layer of the stack, from hardware mounting to service deployment.
+
+1. System Establishment (01-setup.sh)
+    - Updates apt repositories.
+    - Installs essential dependencies (mergerfs, snapraid, git, curl).
+    - Installs the Docker Engine and Compose plugin.
+
+2. User Management (02-users.sh)
+    - Creates dedicated service users with nologin shells.
+    - Establishes the sysadmin user with sudo privileges.
+    - Creates /home directory structure.
+
+3. Storage Reconstruction (03-storage.sh)
+    - Verifies physical drive presence via UUIDs (D1, D2, P1).
+    - Configures /etc/fstab for persistent mounts.
+    - Deploys MergerFs to establish drive pool formation. 
+    - Rebuilds the SnapRAID configuration file.
+
+4. Permission Hardening (04-permissions.sh)
+    - Applies the Principle of Least Privilege (700 on home dirs).
+    - Implements SGID (Set Group ID) and Least Privilege on the dpool.
+
+5. Logic Deployment (05-service-config.sh)
+    - Maps the Essential Logic (YAMLs, Caddyfiles) from this repository to the respective /home directories.
+    - Essential Files include:
+        - Caddyfile, authelia/configuration.yml
+        - homepage/services.yaml, home-assistant/configuration.yaml
+
+6. Server Redeployment (06-deploy.sh)
+    - Performs a final health check on the storage pool.
+    - Bootstraps Portainer CE for GUI-based management.
+
+Final Step: Manual deployment of the Master Compose Stack via Portainer.
+
+📂 Repository Structure
+Plaintext
+.
+├── scripts/
+│   ├── 01-setup.sh
+│   ├── ...
+│   └── 06-deploy.sh
+└── config/
+    └── services/
+        ├── authelia/
+        ├── caddy/
+        ├── home-assistant/
+        └── homepage/
+
+Security Note: Sensitive files (e.g., secrets.yaml, users_database.yml) are encrypted using git-crypt.
+To unlock the repository after cloning:
+<git-crypt unlock /path/to/your/key>
+
+Post-Deployment Checklist
+[ ] Log into Portainer (Port 9443) and deploy the Master Stack.
+[ ] Run snapraid diff to verify parity status.
+[ ] Update Home Assistant secrets.yaml with any new integration tokens.
+[ ] Verify Caddy SSL certificate propagation for *.almard.dev.
+
+How to use this for your Rebuild:
+Reinstall Debian Linux (Minimal).
+Clone this repo: git clone https://github.com/your-repo/almard-server.git.
+Run the scripts in order: sudo ./scripts/01-setup.sh, etc.
