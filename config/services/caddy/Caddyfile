@@ -1,0 +1,112 @@
+cat Caddyfile
+{
+	email {$EMAIL}
+}
+
+# Snippet for Cloudflare DNS Auth
+(cloudflare_tls) {
+	tls {
+		dns cloudflare {env.CLOUDFLARE_API_TOKEN}
+	}
+}
+
+# Snippet for Authelia "Bouncer" Logic
+(auth_proxy) {
+	forward_auth authelia:9091 {
+		uri /api/verify?rd=https://auth.almard.dev/
+		copy_headers Remote-User Remote-Groups Remote-Name Remote-Email
+	}
+}
+
+# --- THE WILDCARD BLOCK ---
+*.almard.dev {
+	import cloudflare_tls
+
+	# Authelia Portal
+	@auth host auth.almard.dev
+	handle @auth {
+		reverse_proxy authelia:9091
+	}
+
+	# Management
+	@homepage host homepage.almard.dev
+	handle @homepage {
+		reverse_proxy homepage:3000
+	}
+
+	@filebrowser host filebrowser.almard.dev
+	handle @filebrowser {
+		import auth_proxy
+		reverse_proxy filebrowser:80
+	}
+
+	# Media
+	@jellyfin host jellyfin.almard.dev
+	handle @jellyfin {
+		reverse_proxy jellyfin:8096
+	}
+
+	@kavita host kavita.almard.dev
+	handle @kavita {
+		import auth_proxy
+		reverse_proxy kavita:5000
+	}
+
+	@navidrome host music.almard.dev
+	handle @navidrome {
+		reverse_proxy navidrome:4533
+	}
+
+	@abs host audio.almard.dev
+	handle @abs {
+		reverse_proxy audiobookshelf:80
+	}
+
+	# Photos
+	@immich host immich.almard.dev
+	handle @immich {
+		reverse_proxy immich_server:2283
+	}
+
+	# Downloads (Gluetun Stack)
+	@gluetun-web host vpn.almard.dev
+	handle @gluetun-web {
+		import auth_proxy
+		reverse_proxy gluetun-webui:3000
+	}
+
+	@sonarr host sonarr.almard.dev
+	handle @sonarr {
+		import auth_proxy
+		reverse_proxy gluetun:8989
+	}
+
+	@qb host qb.almard.dev
+	handle @qb {
+		import auth_proxy
+		reverse_proxy gluetun:8080
+	}
+
+	@jackett host jackett.almard.dev
+	handle @jackett {
+		import auth_proxy
+		reverse_proxy gluetun:9117
+	}
+
+	@slskd host soulseek.almard.dev
+	handle @slskd {
+		import auth_proxy
+		reverse_proxy gluetun:5030
+	}
+
+	# Smart Home (Network Mode: Host)
+	@ha host ha.almard.dev
+	handle @ha {
+		reverse_proxy 192.168.1.150:8123
+	}
+
+	# Fallback
+	handle {
+		abort
+	}
+}

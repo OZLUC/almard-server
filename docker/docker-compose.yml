@@ -5,9 +5,7 @@ networks:
 services:
 # --- NETWORKING & REVERSE PROXY ---
   caddy:
-    build: 
-      context: ./caddy
-      dockerfile: Dockerfile
+    image: local-caddy-cloudflare
     container_name: caddy
     user: "${NWU_ID}:${NWU_ID}"
     restart: unless-stopped
@@ -18,6 +16,8 @@ services:
       - "443:443"
     environment:
       - CLOUDFLARE_API_TOKEN=${CF_DNS_TOKEN}
+      - DOMAIN=${DOMAIN}
+      - EMAIL=${EMAIL}
     volumes:
       - ${NWU_HOME_DIR}/caddy/Caddyfile:/etc/caddy/Caddyfile
       - ${NWU_HOME_DIR}/caddy/data:/data

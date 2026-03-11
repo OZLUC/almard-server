@@ -1,0 +1,29 @@
+# /etc/fstab: static file system information.
+#
+# Use 'blkid' to print the universally unique identifier for a
+# device; this may be used with UUID= as a more robust way to name devices
+# that works even if disks are added and removed. See fstab(5).
+#
+# systemd generates mount units based on this file, see systemd.mount(5).
+# Please run 'systemctl daemon-reload' after making changes here.
+#
+# <file system> <mount point>   <type>  <options>       <dump>  <pass>
+# / was on /dev/nvme0n1p2 during installation
+UUID=95960700-24af-4e3b-bad6-33c8b1533d12 /               ext4    errors=remount-ro 0       1
+# /boot/efi was on /dev/nvme0n1p1 during installation
+UUID=A4C9-CB0D  /boot/efi       vfat    umask=0077      0       1
+# /home was on /dev/nvme0n1p4 during installation
+UUID=a4bd4730-f240-4ff6-acd0-d3d9dc05bffd /home           ext4    defaults        0       2
+# swap was on /dev/nvme0n1p3 during installation
+UUID=0b26025a-f3ea-4913-b7eb-172ef3add365 none            swap    sw              0       0
+
+# data drives
+UUID=c85aa558-fe6e-4404-9329-11a40a226232 /mnt/d1 ext4 defaults 0 2
+UUID=d7a0e0bf-9fc8-420e-baeb-2bc0cd434895 /mnt/d2 ext4 defaults 0 2
+
+# MergerFS pool
+/mnt/d1:/mnt/d2 /mnt/dpool fuse.mergerfs rw,nonempty,allow_other,use_ino,cache.files=off,moveonenospc=true,category.create=mfs,dropcacheonclose=true,minfreespace=250G,fsname=mergerfs 0 0
+
+
+# SnapRAID parity drive
+UUID=9a520d22-1e8e-42bf-9abe-fbcceab7c45b /mnt/p1 ext4 defaults 0 2

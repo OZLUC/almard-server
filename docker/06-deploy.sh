@@ -1,0 +1,1 @@
+# Once users, directories, permissions, service directories/configs established. check here? deploy docker-compose? or establish everything else and deploy with portainer. obviously portainer will need to be deployed too 
